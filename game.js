@@ -4,6 +4,7 @@ const levelEl = document.getElementById("level");
 const hpEl = document.getElementById("hp");
 const statusEl = document.getElementById("status");
 const controlsEl = document.getElementById("controls");
+const warningEl = document.getElementById("warning");
 
 const keys = new Set();
 const state = {
@@ -20,8 +21,17 @@ const state = {
   stars: [],
   nebulae: [],
   lastShot: 0,
+  nullZoneTime: 0,
+  playerDestroyedAt: 0,
   gameOver: false,
 };
+
+const NULL_ZONE = {
+  halfWidth: 700,
+  halfHeight: 450,
+  warningDelay: 4,
+};
+const AUTO_SPEED = 190;
 
 const ENEMY = {
   asteroid: { hp: 1, color: "#8fa4b0" },
@@ -69,13 +79,14 @@ function randomAsteroidRadius(size) {
 }
 
 function makeAsteroid(size, x, y, vx, vy) {
+  const radius = randomAsteroidRadius(size);
   return {
     type: "asteroid",
     asteroidSize: size,
     hp: 1,
-    radius: randomAsteroidRadius(size),
-    x,
-    y,
+    radius,
+    x: Math.max(-NULL_ZONE.halfWidth + radius, Math.min(NULL_ZONE.halfWidth - radius, x)),
+    y: Math.max(-NULL_ZONE.halfHeight + radius, Math.min(NULL_ZONE.halfHeight - radius, y)),
     vx,
     vy,
   };
@@ -109,6 +120,19 @@ function makeStrikeCraft(x, y) {
     y,
     vx: rand(-40, 40),
     vy: rand(-40, 40),
+  };
+}
+
+function safeSpawnPosition(angle, distance, margin = 60) {
+  return {
+    x: Math.max(
+      -NULL_ZONE.halfWidth + margin,
+      Math.min(NULL_ZONE.halfWidth - margin, state.camX + Math.cos(angle) * distance),
+    ),
+    y: Math.max(
+      -NULL_ZONE.halfHeight + margin,
+      Math.min(NULL_ZONE.halfHeight - margin, state.camY + Math.sin(angle) * distance),
+    ),
   };
 }
 
@@ -146,11 +170,12 @@ function spawnLevel(level) {
     const angle = rand(0, Math.PI * 2);
     const distance = rand(420, range);
     const size = Math.random() < 0.62 ? "large" : "small";
+    const position = safeSpawnPosition(angle, distance, 48);
     enemies.push(
       makeAsteroid(
         size,
-        state.camX + Math.cos(angle) * distance,
-        state.camY + Math.sin(angle) * distance,
+        position.x,
+        position.y,
         rand(-12, 12),
         rand(-12, 12),
       ),
@@ -160,14 +185,16 @@ function spawnLevel(level) {
   for (let i = 0; i < stationCount; i += 1) {
     const angle = rand(0, Math.PI * 2);
     const distance = rand(420, range);
-    enemies.push(makeStation(state.camX + Math.cos(angle) * distance, state.camY + Math.sin(angle) * distance));
+    const position = safeSpawnPosition(angle, distance, ENEMY.station.radius + 12);
+    enemies.push(makeStation(position.x, position.y));
   }
 
   for (let i = 0; i < strikeCount; i += 1) {
     const angle = rand(0, Math.PI * 2);
     const distance = rand(420, range);
+    const position = safeSpawnPosition(angle, distance, ENEMY.strikeCraft.radius + 12);
     enemies.push(
-      makeStrikeCraft(state.camX + Math.cos(angle) * distance, state.camY + Math.sin(angle) * distance),
+      makeStrikeCraft(position.x, position.y),
     );
   }
 
@@ -186,9 +213,26 @@ function restart() {
     enemies: [],
     particles: [],
     lastShot: 0,
+    nullZoneTime: 0,
+    playerDestroyedAt: 0,
     gameOver: false,
   });
   spawnLevel(state.level);
+}
+
+function isInNullZone() {
+  return (
+    Math.abs(state.camX) >= NULL_ZONE.halfWidth ||
+    Math.abs(state.camY) >= NULL_ZONE.halfHeight
+  );
+}
+
+function combustAndRespawn() {
+  state.playerDestroyedAt = performance.now();
+  damagePlayer(1, "#ff4545", 34);
+  state.camX = 0;
+  state.camY = 0;
+  state.nullZoneTime = 0;
 }
 
 function shoot(time) {
@@ -225,6 +269,7 @@ function damagePlayer(amount, color = "#ff8a8a", particleAmount = 16) {
   state.hp -= amount;
   addExplosion(state.camX, state.camY, color, particleAmount);
   if (state.hp <= 0) {
+    state.playerDestroyedAt = performance.now();
     state.gameOver = true;
   }
 }
@@ -338,9 +383,17 @@ function update(delta, time) {
     state.facingY = moveY;
   }
 
-  const speed = 310;
-  state.camX += moveX * speed * delta;
-  state.camY += moveY * speed * delta;
+  state.camX += state.facingX * AUTO_SPEED * delta;
+  state.camY += state.facingY * AUTO_SPEED * delta;
+
+  if (isInNullZone()) {
+    state.nullZoneTime += delta;
+    if (state.nullZoneTime >= NULL_ZONE.warningDelay) {
+      combustAndRespawn();
+    }
+  } else {
+    state.nullZoneTime = 0;
+  }
 
   for (const bullet of state.bullets) {
     bullet.x += bullet.vx * delta;
@@ -368,6 +421,22 @@ function update(delta, time) {
     }
     enemy.x += enemy.vx * delta;
     enemy.y += enemy.vy * delta;
+    if (enemy.type === "asteroid") {
+      if (enemy.x - enemy.radius < -NULL_ZONE.halfWidth) {
+        enemy.x = -NULL_ZONE.halfWidth + enemy.radius;
+        enemy.vx = Math.abs(enemy.vx);
+      } else if (enemy.x + enemy.radius > NULL_ZONE.halfWidth) {
+        enemy.x = NULL_ZONE.halfWidth - enemy.radius;
+        enemy.vx = -Math.abs(enemy.vx);
+      }
+      if (enemy.y - enemy.radius < -NULL_ZONE.halfHeight) {
+        enemy.y = -NULL_ZONE.halfHeight + enemy.radius;
+        enemy.vy = Math.abs(enemy.vy);
+      } else if (enemy.y + enemy.radius > NULL_ZONE.halfHeight) {
+        enemy.y = NULL_ZONE.halfHeight - enemy.radius;
+        enemy.vy = -Math.abs(enemy.vy);
+      }
+    }
   }
 
   for (const particle of state.particles) {
@@ -436,6 +505,36 @@ function drawWaveBullet(bullet, screenX, screenY) {
   ctx.restore();
 }
 
+function drawStripedRegion(x, y, width, height, time) {
+  if (width <= 0 || height <= 0) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, width, height);
+  ctx.clip();
+  ctx.fillStyle = "rgba(150, 0, 0, 0.1)";
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = "rgba(255, 35, 35, 0.52)";
+  ctx.lineWidth = 3;
+  const offset = (time * 0.08) % 32;
+  for (let stripe = -canvas.height - 32; stripe < canvas.width + canvas.height; stripe += 32) {
+    ctx.beginPath();
+    ctx.moveTo(stripe + offset, 0);
+    ctx.lineTo(stripe - canvas.height + offset, canvas.height);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawNullZone(time) {
+  const boundary = worldToScreen(-NULL_ZONE.halfWidth, -NULL_ZONE.halfHeight);
+  const right = boundary.x + NULL_ZONE.halfWidth * 2;
+  const bottom = boundary.y + NULL_ZONE.halfHeight * 2;
+  drawStripedRegion(0, 0, canvas.width, boundary.y, time);
+  drawStripedRegion(0, bottom, canvas.width, canvas.height - bottom, time);
+  drawStripedRegion(0, boundary.y, boundary.x, NULL_ZONE.halfHeight * 2, time);
+  drawStripedRegion(right, boundary.y, canvas.width - right, NULL_ZONE.halfHeight * 2, time);
+}
+
 function render(time) {
   ctx.fillStyle = "#020207";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -473,6 +572,21 @@ function render(time) {
     ctx.fillRect(s.x, s.y, star.r, star.r);
   }
   ctx.globalAlpha = 1;
+
+  drawNullZone(time);
+
+  const boundary = worldToScreen(-NULL_ZONE.halfWidth, -NULL_ZONE.halfHeight);
+  const boundaryWidth = NULL_ZONE.halfWidth * 2;
+  const boundaryHeight = NULL_ZONE.halfHeight * 2;
+  ctx.save();
+  ctx.strokeStyle = "#ff3030";
+  ctx.lineWidth = 6;
+  ctx.setLineDash([22, 14]);
+  ctx.lineDashOffset = -time * 0.08;
+  ctx.shadowBlur = 12;
+  ctx.shadowColor = "rgba(255, 30, 30, 0.85)";
+  ctx.strokeRect(boundary.x, boundary.y, boundaryWidth, boundaryHeight);
+  ctx.restore();
 
   for (const enemy of state.enemies) {
     const s = worldToScreen(enemy.x, enemy.y);
@@ -568,6 +682,27 @@ function render(time) {
   ctx.stroke();
   ctx.restore();
 
+  if (state.playerDestroyedAt > 0) {
+    const progress = (time - state.playerDestroyedAt) / 900;
+    if (progress < 1) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.strokeStyle = `rgba(255, 70, 70, ${1 - progress})`;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(0, 0, 18 + progress * 70, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.rotate(progress * Math.PI);
+      ctx.beginPath();
+      ctx.moveTo(-26 - progress * 16, 0);
+      ctx.lineTo(26 + progress * 16, 0);
+      ctx.moveTo(0, -26 - progress * 16);
+      ctx.lineTo(0, 26 + progress * 16);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   levelEl.textContent = `Level ${state.level}`;
   hpEl.textContent = `Hull ${Math.max(0, state.hp)}/${state.maxHp}`;
   const stationsLeft = state.enemies.filter((enemy) => enemy.type === "station").length;
@@ -577,6 +712,11 @@ function render(time) {
   if (controlsEl) {
     controlsEl.textContent =
       "Move: Arrow Keys/WASD · Shoot: Space or K (tap, max 4 shots/sec) · Restart: Enter";
+  }
+  if (warningEl) {
+    const remaining = Math.max(0, NULL_ZONE.warningDelay - state.nullZoneTime);
+    warningEl.textContent = `WARNING: ENTERING NULL ZONE ${remaining.toFixed(1)}`;
+    warningEl.classList.toggle("active", state.nullZoneTime > 0);
   }
 }
 

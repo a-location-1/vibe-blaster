@@ -13,7 +13,7 @@ body {
   height: 100%;
   overflow: hidden;
   background: #000;
-  font-family: "Segoe UI", system-ui, sans-serif;
+  font-family: "Courier New", Courier, monospace;
 }
 
 #game {
@@ -39,6 +39,32 @@ body {
 
 #status {
   text-align: right;
+}
+
+#warning {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #ff4545;
+  font-size: clamp(1.1rem, 3vw, 2rem);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-shadow: 0 0 8px #ff0000;
+  pointer-events: none;
+  opacity: 0;
+}
+
+#warning.active {
+  opacity: 1;
+  animation: warning-flash 0.45s steps(2, end) infinite;
+}
+
+@keyframes warning-flash {
+  50% {
+    opacity: 0.2;
+  }
 }
 
 #controls {

@@ -23,6 +23,8 @@ const state = {
   lastShot: 0,
   nullZoneTime: 0,
   playerDestroyedAt: 0,
+  speedLevel: 0,
+  paused: false,
   gameOver: false,
 };
 
@@ -31,7 +33,8 @@ const NULL_ZONE = {
   halfHeight: 450,
   warningDelay: 4,
 };
-const AUTO_SPEED = 190;
+const CAMERA_ZOOM = 1.2;
+const SPEED_LEVELS = [190, 310, 460];
 
 const ENEMY = {
   asteroid: { hp: 1, color: "#8fa4b0" },
@@ -95,8 +98,10 @@ function makeAsteroid(size, x, y, vx, vy) {
 function makeStation(x, y) {
   return {
     type: "station",
-    hp: ENEMY.station.hp,
+    hp: 1,
     radius: ENEMY.station.radius,
+    panelHp: [1, 1, 1, 1],
+    coreHp: 3,
     x,
     y,
     vx: 0,
@@ -215,6 +220,8 @@ function restart() {
     lastShot: 0,
     nullZoneTime: 0,
     playerDestroyedAt: 0,
+    speedLevel: 0,
+    paused: false,
     gameOver: false,
   });
   spawnLevel(state.level);
@@ -360,11 +367,45 @@ function spawnAsteroidFragments(enemy, spawned) {
   }
 }
 
+function damageStation(enemy, bullet) {
+  const size = enemy.radius;
+  const panels = [
+    [0, -size * 0.68],
+    [size * 0.68, 0],
+    [0, size * 0.68],
+    [-size * 0.68, 0],
+  ];
+  for (let i = 0; i < panels.length; i += 1) {
+    const [offsetX, offsetY] = panels[i];
+    if (
+      enemy.panelHp[i] > 0 &&
+      Math.hypot(bullet.x - (enemy.x + offsetX), bullet.y - (enemy.y + offsetY)) <= 18
+    ) {
+      enemy.panelHp[i] = 0;
+      return true;
+    }
+  }
+
+  if (
+    enemy.panelHp.every((hp) => hp === 0) &&
+    enemy.coreHp > 0 &&
+    Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y) <= 20
+  ) {
+    enemy.coreHp -= 1;
+    if (enemy.coreHp <= 0) enemy.hp = 0;
+    return true;
+  }
+  return false;
+}
+
 function update(delta, time) {
   if (state.gameOver) {
     if (keys.has("enter")) {
       restart();
     }
+    return;
+  }
+  if (state.paused) {
     return;
   }
 
@@ -383,8 +424,9 @@ function update(delta, time) {
     state.facingY = moveY;
   }
 
-  state.camX += state.facingX * AUTO_SPEED * delta;
-  state.camY += state.facingY * AUTO_SPEED * delta;
+  const speed = SPEED_LEVELS[state.speedLevel];
+  state.camX += state.facingX * speed * delta;
+  state.camY += state.facingY * speed * delta;
 
   if (isInNullZone()) {
     state.nullZoneTime += delta;
@@ -448,12 +490,13 @@ function update(delta, time) {
 
   for (const bullet of state.bullets) {
     for (const enemy of state.enemies) {
-      const r = enemy.radius ?? ENEMY[enemy.type].radius;
-      if (Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y) <= r) {
-        bullet.life = 0;
-        enemy.hp -= 1;
-        break;
-      }
+      const hit = enemy.type === "station"
+        ? damageStation(enemy, bullet)
+        : Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y) <= (enemy.radius ?? ENEMY[enemy.type].radius);
+      if (!hit) continue;
+      bullet.life = 0;
+      if (enemy.type !== "station") enemy.hp -= 1;
+      break;
     }
   }
 
@@ -474,7 +517,7 @@ function update(delta, time) {
     const r = (enemy.radius ?? ENEMY[enemy.type].radius) + playerRadius;
     if (Math.hypot(state.camX - enemy.x, state.camY - enemy.y) < r) {
       damagePlayer(1);
-      enemy.hp = 0;
+      if (enemy.type !== "station") enemy.hp = 0;
     }
   }
 
@@ -538,6 +581,10 @@ function drawNullZone(time) {
 function render(time) {
   ctx.fillStyle = "#020207";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.scale(CAMERA_ZOOM, CAMERA_ZOOM);
+  ctx.translate(-canvas.width / 2, -canvas.height / 2);
 
   for (const nebula of state.nebulae) {
     const s = worldToScreen(nebula.x, nebula.y);
@@ -606,16 +653,33 @@ function render(time) {
       ctx.closePath();
       ctx.stroke();
     } else if (enemy.type === "station") {
-      ctx.strokeStyle = spec.color;
-      ctx.lineWidth = 4;
       const size = enemy.radius;
-      ctx.strokeRect(s.x - size, s.y - size, size * 2, size * 2);
+      const panels = [
+        [[-size * 0.68, -size * 0.68], [size * 0.68, -size * 0.68], [0, -size]],
+        [[size * 0.68, -size * 0.68], [size * 0.68, size * 0.68], [size, 0]],
+        [[size * 0.68, size * 0.68], [-size * 0.68, size * 0.68], [0, size]],
+        [[-size * 0.68, size * 0.68], [-size * 0.68, -size * 0.68], [-size, 0]],
+      ];
+      for (let i = 0; i < panels.length; i += 1) {
+        if (enemy.panelHp[i] === 0) continue;
+        ctx.fillStyle = "#e061ff";
+        ctx.beginPath();
+        ctx.moveTo(s.x + panels[i][0][0], s.y + panels[i][0][1]);
+        ctx.lineTo(s.x + panels[i][1][0], s.y + panels[i][1][1]);
+        ctx.lineTo(s.x + panels[i][2][0], s.y + panels[i][2][1]);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = spec.color;
+        ctx.lineWidth = 4;
+        ctx.stroke();
+      }
+      const panelsDestroyed = enemy.panelHp.every((hp) => hp === 0);
       ctx.beginPath();
-      ctx.moveTo(s.x, s.y - size);
-      ctx.lineTo(s.x + size, s.y);
-      ctx.lineTo(s.x, s.y + size);
-      ctx.lineTo(s.x - size, s.y);
-      ctx.closePath();
+      ctx.arc(s.x, s.y, 15, 0, Math.PI * 2);
+      ctx.fillStyle = panelsDestroyed ? "#ff697d" : "#292936";
+      ctx.fill();
+      ctx.strokeStyle = panelsDestroyed ? "#fff08a" : "#555563";
+      ctx.lineWidth = 2;
       ctx.stroke();
     } else {
       ctx.strokeStyle = spec.color;
@@ -703,15 +767,19 @@ function render(time) {
     }
   }
 
+  ctx.restore();
+
   levelEl.textContent = `Level ${state.level}`;
   hpEl.textContent = `Hull ${Math.max(0, state.hp)}/${state.maxHp}`;
   const stationsLeft = state.enemies.filter((enemy) => enemy.type === "station").length;
   statusEl.textContent = state.gameOver
     ? "Game Over — press Enter to restart"
-    : `Stations remaining ${stationsLeft}`;
+    : state.paused
+      ? "PAUSED — press P to resume"
+    : `Stations remaining ${stationsLeft} · Speed ${state.speedLevel + 1}/3`;
   if (controlsEl) {
     controlsEl.textContent =
-      "Move: Arrow Keys/WASD · Shoot: Space or K (tap, max 4 shots/sec) · Restart: Enter";
+      "Move: Arrow Keys/WASD · Shoot: Space or K · Pause: P · Restart: Enter";
   }
   if (warningEl) {
     const remaining = Math.max(0, NULL_ZONE.warningDelay - state.nullZoneTime);
@@ -731,8 +799,33 @@ function frame(now) {
 
 window.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
+  if (key === "p" && !event.repeat) {
+    state.paused = !state.paused;
+    event.preventDefault();
+    return;
+  }
   if (!event.repeat) {
     keys.add(key);
+    const directions = {
+      arrowleft: [-1, 0],
+      arrowright: [1, 0],
+      arrowup: [0, -1],
+      arrowdown: [0, 1],
+      a: [-1, 0],
+      d: [1, 0],
+      w: [0, -1],
+      s: [0, 1],
+    };
+    const direction = directions[key];
+    if (direction) {
+      const isForwardTap = direction[0] === state.facingX && direction[1] === state.facingY;
+      state.facingX = direction[0];
+      state.facingY = direction[1];
+      state.speedLevel = Math.max(
+        0,
+        Math.min(2, state.speedLevel + (isForwardTap ? 1 : -1)),
+      );
+    }
   }
   if ((key === " " || key === "k") && !event.repeat) {
     shoot(performance.now());

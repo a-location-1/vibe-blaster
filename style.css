@@ -40,3 +40,18 @@ body {
 #status {
   text-align: right;
 }
+
+#controls {
+  position: fixed;
+  left: 50%;
+  bottom: 0.8rem;
+  transform: translateX(-50%);
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  color: #d8eeff;
+  font-size: 0.85rem;
+  text-shadow: 0 0 6px rgba(125, 226, 255, 0.7);
+  background: rgba(5, 18, 28, 0.5);
+  pointer-events: none;
+  white-space: nowrap;
+}

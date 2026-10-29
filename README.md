@@ -4,7 +4,7 @@ A browser-based top-down shooter for SEIS-606.
 
 ## Controls
 - Move: Arrow keys or `WASD`
-- Fire: `Space` or `K`
+- Fire: tap `Space` or `K` (max 4 shots/sec; no auto-fire on hold)
 - Restart after game over: `Enter`
 
 ## Run locally
